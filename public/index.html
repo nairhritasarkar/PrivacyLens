@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PrivacyLens — website permission scanner</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: { colors: {
+    teal: { DEFAULT:'#146b63', soft:'#e4f1ef' },
+    amber:{ DEFAULT:'#a9631a', soft:'#fbf0e2' },
+    red:  { DEFAULT:'#a13f37', soft:'#fbeae8' },
+  } } } }
+</script>
+</head>
+<body class="bg-[#f6f8f6] text-[#101a17] font-sans text-[15px]">
+<div class="max-w-2xl mx-auto px-5 pt-7 pb-16">
+
+  <header class="flex items-center gap-3 mb-1">
+    <div class="w-9 h-9 rounded-[10px] bg-teal flex items-center justify-center shrink-0">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" class="w-[18px] h-[18px]">
+        <circle cx="11" cy="11" r="6"/><line x1="20" y1="20" x2="15.5" y2="15.5"/>
+      </svg>
+    </div>
+    <h1 class="text-xl font-semibold tracking-tight">PrivacyLens — website scanner</h1>
+  </header>
+  <p class="text-[#5c6b66] text-sm mb-7 max-w-[56ch]">
+    Enter a live website. This fetches the real page and its scripts server-side and reports actual permission signals — the Permissions-Policy header, and real permission-API calls found in the code.
+  </p>
+
+  <div class="flex gap-2 mb-2">
+    <input id="url-input" type="text" placeholder="e.g. airbnb.com or https://meet.google.com"
+      class="flex-1 text-sm px-3.5 py-2.5 rounded-lg border border-[#dde4e0] bg-white focus:outline focus:outline-2 focus:outline-teal" />
+    <button id="scan-btn" class="font-semibold text-sm px-4.5 py-2.5 rounded-lg bg-teal text-white hover:brightness-95 disabled:opacity-60">Scan</button>
+  </div>
+  <p class="text-xs text-[#5c6b66] mb-6">Real fetch of the target site's HTML and up to 6 linked scripts. Sites blocking bots or built entirely at runtime (heavy SPAs) may under-report.</p>
+
+  <div id="status" class="hidden text-sm text-[#5c6b66] mb-4"></div>
+  <div id="error" class="hidden text-sm text-red bg-red-soft rounded-lg px-4 py-3 mb-4"></div>
+
+  <div id="result" class="hidden bg-white border border-[#dde4e0] rounded-xl p-5"></div>
+
+  <footer class="mt-9 text-xs text-[#5c6b66] border-t border-[#dde4e0] pt-4">
+    PrivacyLens · results reflect a static scan at the moment you run it. Not affiliated with the sites it evaluates.
+  </footer>
+</div>
+
+<script>
+const input = document.getElementById('url-input');
+const btn = document.getElementById('scan-btn');
+const statusEl = document.getElementById('status');
+const errorEl = document.getElementById('error');
+const resultEl = document.getElementById('result');
+
+btn.addEventListener('click', runScan);
+input.addEventListener('keydown', e => { if (e.key === 'Enter') runScan(); });
+
+function permRow(label, ok, sub) {
+  return `<div class="flex items-start gap-2 text-[13.5px] px-2.5 py-1.5 rounded-md ${ok ? 'bg-[#f6f8f6]' : 'bg-amber-soft'}">
+    <span class="w-[7px] h-[7px] rounded-full shrink-0 mt-1.5 ${ok ? 'bg-teal' : 'bg-amber'}"></span>
+    <span class="flex-1">
+      <span class="block">${label}</span>
+      ${sub ? `<span class="block text-[11.5px] text-[#5c6b66] mt-0.5">${sub}</span>` : ''}
+    </span>
+    <span class="text-[11px] font-semibold shrink-0 ${ok ? 'text-[#5c6b66]' : 'text-amber'}">${ok ? 'Fits its category' : 'Worth questioning'}</span>
+  </div>`;
+}
+
+function blockedRow(directive, interpretation) {
+  return `<div class="flex items-center gap-2 text-[13.5px] px-2.5 py-1.5 rounded-md bg-teal-soft">
+    <span class="w-[7px] h-[7px] rounded-full shrink-0 bg-teal"></span>
+    <span class="flex-1">${directive}</span>
+    <span class="text-[11px] font-semibold text-teal">${interpretation}</span>
+  </div>`;
+}
+
+async function runScan() {
+  const url = input.value.trim();
+  errorEl.classList.add('hidden');
+  resultEl.classList.add('hidden');
+  if (!url) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  statusEl.textContent = 'Fetching the site and its scripts…';
+  statusEl.classList.remove('hidden');
+
+  try {
+    const res = await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    statusEl.classList.add('hidden');
+
+    if (!res.ok) {
+      errorEl.textContent = data.error || 'Something went wrong scanning that site.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    render(data);
+  } catch (e) {
+    statusEl.classList.add('hidden');
+    errorEl.textContent = 'Could not reach the scanner backend. Is the server running?';
+    errorEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Scan';
+  }
+}
+
+function render(d) {
+  const host = new URL(d.scannedUrl).hostname;
+  const detectedByKey = k => d.detected.find(x => x.key === k);
+
+  const neededHtml = d.needed.map(p => permRow(p.label, true)).join('');
+  const questionableHtml = d.questionable.map(p => permRow(p.label, false)).join('');
+  const blockedHtml = d.explicitlyBlocked.map(p => blockedRow(p.directive, 'Explicitly blocked by site policy')).join('');
+
+  const noSignals = d.detected.length === 0 && d.explicitlyBlocked.length === 0 && d.explicitlyAllowed.length === 0;
+
+  resultEl.innerHTML = `
+    <h3 class="text-base font-semibold mb-0.5">${host}</h3>
+    <div class="text-[#5c6b66] text-[13px] mb-1">
+      HTTP ${d.httpStatus} · ${d.category ? 'Detected category: ' + d.category : 'Category not recognized — showing raw signals only'}
+    </div>
+    <div class="text-[#5c6b66] text-[12px] mb-4">Scripts inspected: ${d.scriptsInspected} of ${d.scriptsFoundTotal} found on the page</div>
+
+    ${noSignals ? `<p class="text-[13.5px] text-[#5c6b66] mb-2">No permission-API calls or Permissions-Policy header were found in the fetched HTML/scripts. That can mean the site genuinely doesn't use these features here, or that its logic lives in code we couldn't reach (see note below).</p>` : ''}
+
+    ${d.needed.length || d.questionable.length ? `
+      <div class="text-[12px] font-semibold text-[#5c6b66] mb-1.5 mt-2">Permission APIs found in the site's code</div>
+      <div class="flex flex-col gap-1.5 mb-4">${neededHtml}${questionableHtml}</div>
+    ` : ''}
+
+    ${blockedHtml ? `
+      <div class="text-[12px] font-semibold text-[#5c6b66] mb-1.5">Explicitly blocked by the site's own Permissions-Policy</div>
+      <div class="flex flex-col gap-1.5 mb-4">${blockedHtml}</div>
+    ` : ''}
+
+    <div class="text-xs text-[#5c6b66] bg-[#f6f8f6] rounded-md px-2.5 py-2 mt-1">${d.notes}</div>
+  `;
+  resultEl.classList.remove('hidden');
+}
+</script>
+</body>
+</html>

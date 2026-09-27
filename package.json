@@ -1,0 +1,17 @@
+{
+  "name": "privacylens-scanner",
+  "version": "1.0.0",
+  "description": "PrivacyLens - real permission-signal scanner for a given website",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cheerio": "^1.0.0"
+  }
+}
